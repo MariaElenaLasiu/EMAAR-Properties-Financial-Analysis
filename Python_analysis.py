@@ -16,6 +16,7 @@ df_cashflow_long = pd.read_csv("cleaned_cash_flow_v2.csv")
 df_income_long["Value"] = df_income_long["Value"].astype(str).str.replace(",", "").astype(float)
 df_balance_long["Value"] = df_balance_long["Value"].astype(str).str.replace(",", "").astype(float)
 df_cashflow_long["Value"] = df_cashflow_long["Value"].astype(str).str.replace(",", "").astype(float)
+df_cashflow_long["Metric"] = df_cashflow_long["Metric"].str.lower().str.strip()
 
 
 # Is Emaar growing?
@@ -84,14 +85,33 @@ print(f"📈 Net Income CAGR ({start_year}–{end_year}): {cagr_net_income * 100
 
 # Is Emaar profitable?
 
-# Calculate key profitability metrics
-df_summary["Gross Profit"] = df_summary["Revenue"] - df_summary["Cost of Revenue"]
+# Calculate Gross Margin %
+df_summary["Gross Profit"] = df_summary["Revenue"] + df_summary["Cost of Revenue"]
 df_summary["Gross Margin (%)"] = (df_summary["Gross Profit"] / df_summary["Revenue"]) * 100
 
-df_summary["Operating Profit"] = df_summary["Gross Profit"] - df_summary["Operating Expenses"]
+# Calculate Operating Margin %
+sga = df_income_long[df_income_long["Metric"].str.contains("Selling, General And Administrative Expenses", case=False, na=False)]
+other_op_exp = df_income_long[df_income_long["Metric"].str.contains("Other Operating Expenses", case=False, na=False)]
+dep_ppe = df_income_long[df_income_long["Metric"].str.contains("Depreciation Of Property, Plant And Equipment", case=False, na=False)]
+dep_inv = df_income_long[df_income_long["Metric"].str.contains("Depreciation Of Investment Properties", case=False, na=False)]
+
+# Group each by year
+sga_year = sga.groupby("Year")["Value"].sum()
+other_op_year = other_op_exp.groupby("Year")["Value"].sum()
+dep_ppe_year = dep_ppe.groupby("Year")["Value"].sum()
+dep_inv_year = dep_inv.groupby("Year")["Value"].sum()
+
+# Total Operating Expenses (should be negative)
+opexp = sga_year + other_op_year + dep_ppe_year + dep_inv_year
+
+# Calculate the metric
+df_summary["Operating Expenses"] = opexp
+df_summary["Operating Profit"] = df_summary["Gross Profit"] + df_summary["Operating Expenses"]
 df_summary["Operating Margin (%)"] = (df_summary["Operating Profit"] / df_summary["Revenue"]) * 100
 
+# Calculate Net Margin %
 df_summary["Net Margin (%)"] = (df_summary["Net Income"] / df_summary["Revenue"]) * 100
+
 
 # Round for readability
 df_summary_rounded = df_summary[[
@@ -102,7 +122,37 @@ df_summary_rounded = df_summary[[
 print("\n📊 Profitability Summary Table:")
 print(df_summary_rounded)
 
+
 ## Strong cost control and margin improvement across 2021–2024 show increasing operational efficiency and healthy profitability. Even with a slight dip in margin in 2024, the income-to-revenue ratio remains excellent.
+
+# Calculate EBITDA
+
+# Key metrics
+gross_profit = df_income_long[df_income_long["Metric"].str.contains("Gross Profit", case=False, na=False)]
+other_op_income = df_income_long[df_income_long["Metric"].str.contains("Other Operating Income", case=False, na=False)]
+other_op_expenses = df_income_long[df_income_long["Metric"].str.contains("Other Operating Expenses", case=False, na=False)]
+sga_expenses = df_income_long[df_income_long["Metric"].str.contains("Selling, General and Administrative Expenses", case=False, na=False)]
+dep_pp_e = df_income_long[df_income_long["Metric"].str.contains("Depreciation of property, plant and equipment", case=False, na=False)]
+dep_investment_props = df_income_long[df_income_long["Metric"].str.contains("Depreciation of investment properties", case=False, na=False)]
+
+# Aggregate each item by year
+gp = gross_profit.groupby("Year")["Value"].sum()
+op_inc = other_op_income.groupby("Year")["Value"].sum()
+op_exp = other_op_expenses.groupby("Year")["Value"].sum()
+sga = sga_expenses.groupby("Year")["Value"].sum()
+dep_ppe = dep_pp_e.groupby("Year")["Value"].sum()
+dep_inv = dep_investment_props.groupby("Year")["Value"].sum()
+
+# Compute EBITDA considering negative values of op_exp, sga, dep_ppe, dep_inv
+ebitda = gp + op_inc + op_exp + sga + dep_ppe + dep_inv
+
+# Store in summary table
+df_summary["EBITDA"] = ebitda
+df_summary["EBITDA Margin (%)"] = (df_summary["EBITDA"] / df_summary["Revenue"]) * 100
+
+# Print results
+print("\n📊 EBITDA Summary:")
+print(df_summary[["EBITDA", "EBITDA Margin (%)"]].round(2))
 
 
 
@@ -111,31 +161,68 @@ print(df_summary_rounded)
 # Calculate key metrics
 total_assets = df_balance_long[df_balance_long["Metric"].str.contains("Total Assets", case=False, na=False)]
 shareholders_equity = df_balance_long[df_balance_long["Metric"].str.contains("Total Equity", case=False, na=False)]
-operating_profit = df_income_long[df_income_long["Category"].str.contains("Operating Income", case=False, na=False)]
+op_profit = df_summary["Operating Profit"]
+debt = df_balance_long[
+    df_balance_long["Metric"].str.contains("Interest-bearing loans and borrowings|Sukuk", case=False, na=False)]
 
 # Aggregate by Year
 assets = total_assets.groupby("Year")["Value"].sum()
 interest = finance_costs.groupby("Year")["Value"].sum().abs()  
-op_profit = operating_profit.groupby("Year")["Value"].sum()
 equity = shareholders_equity.groupby("Year")["Value"].sum()
+debt_by_year = debt.groupby("Year")["Value"].sum()
 
 # Combine into a single DataFrame
 df_ratios = pd.DataFrame({
     "Net Income": ni,
     "Total Assets": assets,
-    "Shareholders' Equity": equity
+    "Shareholders' Equity": equity,
+    "Debt": debt_by_year
 }).dropna()
 
-# Calculate ROA and ROE
+# Calculate ROA, ROE and Debt to Equity
 df_ratios["ROA (%)"] = (df_ratios["Net Income"] / df_ratios["Total Assets"]) * 100
 df_ratios["ROE (%)"] = (df_ratios["Net Income"] / df_ratios["Shareholders' Equity"]) * 100
+df_ratios["Debt to Equity"] = (df_ratios["Debt"] / df_ratios["Shareholders' Equity"])
+
+# Calculate Current Ratio
+# Key metrics
+current_asset_items = [
+    "Bank Balances And Cash",
+    "Trade And Unbilled Receivables",
+    "Other Assets, Receivables, Deposits And Prepayments",
+    "Assets Classified As Held For Sale"]
+
+current_liability_items = [
+    "Trade And Other Payables",
+    "Advances From Customers",
+    "Retentions Payable",
+    "Liabilities Directly Associated With Assets Classified As Held For Sale"]
+
+# Filter using exact match
+current_assets = df_balance_long[
+    df_balance_long["Metric"].str.strip().isin(current_asset_items)]
+
+current_liabilities = df_balance_long[
+    df_balance_long["Metric"].str.strip().isin(current_liability_items)]
+
+
+# Group by Year
+current_assets_by_year = current_assets.groupby("Year")["Value"].sum().round(2)
+current_liabilities_by_year = current_liabilities.groupby("Year")["Value"].sum().round(2)
+
+# Current Ratio
+current_ratio = current_assets_by_year / current_liabilities_by_year
+
+# Add to df_ratios
+df_ratios["Current Ratio"] = current_ratio
 
 # Round for readability
 df_ratios = df_ratios.round(2)
 
 # Display the results
-print("\n📊 ROA and ROE by Year:")
-print(df_ratios[["ROA (%)", "ROE (%)"]])
+print("\n📊 ROA, ROE, Debt to Equity by Year and Current Ratio:")
+print(df_ratios[["ROA (%)", "ROE (%)", "Debt to Equity", "Current Ratio"]])
+
 
 # Create dataframe for analysis
 df_efficiency = pd.DataFrame({
@@ -145,7 +232,7 @@ df_efficiency = pd.DataFrame({
     "Interest Expense": interest
 }).dropna()
 
-# --- CALCULATE RATIOS ---
+# Asset Turnover and Interest Coverage
 df_efficiency["Asset Turnover"] = df_efficiency["Revenue"] / df_efficiency["Total Assets"]
 df_efficiency["Interest Coverage"] = df_efficiency["Operating Profit (EBIT)"] / df_efficiency["Interest Expense"]
 
@@ -157,20 +244,14 @@ print("\n📊 Efficiency & Risk Ratios:")
 print(df_efficiency[["Asset Turnover", "Interest Coverage"]])
 
 
-
 # Does Emaar generate enough cash?
 
-# Prepare data
-df_cashflow_long["Value"] = pd.to_numeric(df_cashflow_long["Value"], errors="coerce")
-df_cashflow_long["Metric"] = df_cashflow_long["Metric"].str.lower().str.strip()
-
-# Extract relevant cash flow components
+# Extract cash from operations and capital expenditures (CapEx)
 cash_ops = df_cashflow_long[df_cashflow_long["Metric"].str.contains("net cash flows from operating activities", na=False)]
 capex = df_cashflow_long[df_cashflow_long["Metric"].str.contains("amounts incurred on property, plant and equipment|amounts incurred on investment properties", na=False)]
 
-# Group by Year
 cash_ops = cash_ops.groupby("Year")["Value"].sum()
-capex = capex.groupby("Year")["Value"].sum().abs()  # Make CapEx positive for subtraction
+capex = capex.groupby("Year")["Value"].sum()
 
 # Align years
 years = sorted(list(set(cash_ops.index) & set(capex.index)))
@@ -182,17 +263,13 @@ df_fcf = pd.DataFrame({
     "Operating Cash Flow": cash_ops,
     "CapEx": capex
 })
-df_fcf["Free Cash Flow"] = df_fcf["Operating Cash Flow"] - df_fcf["CapEx"]
+df_fcf["Free Cash Flow"] = df_fcf["Operating Cash Flow"] + df_fcf["CapEx"]
 df_fcf = df_fcf.round(2)
 
 print("\n📊 Free Cash Flow Analysis:")
 print(df_fcf)
 
-# Calculate CAGR
-cagr_fcf = calculate_cagr(rev_start, rev_end, num_years)
 
-# Print results
-print(f"\n📈 Free Cash Flow CAGR ({start_year}–{end_year}): {cagr_fcf * 100:.2f}%")
 
 
 # Charts
@@ -208,7 +285,7 @@ if not os.path.exists(font_path):
 else:
     merriweather = font_manager.FontProperties(fname=font_path, size=16)
 
-# Graph 1 - GROWTH AND PROFITABILITY
+# Graph 1
 # Group and prepare data
 rev = revenue.groupby("Year")["Value"].sum()
 ni = net_income.groupby("Year")["Value"].sum()
@@ -283,7 +360,7 @@ plt.savefig("emaar_financial_overview.png", dpi=300)
 plt.show()
 
 
-# Graph 2 - OPERATIONAL EFFICIENCY AND RETURNS
+# Graph 2
 # Group and prepare data
 roa = (df_ratios["Net Income"] / df_ratios["Total Assets"]) * 100
 roe = (df_ratios["Net Income"] / df_ratios["Shareholders' Equity"]) * 100
@@ -325,10 +402,10 @@ ax.set_xlabel('Year', fontproperties=merriweather, fontsize=16)
 # Remove Y tick labels but keep axis name
 ax.set_yticklabels([])
 ax.tick_params(axis='y', which='both', length=0)
-ax.set_ylabel('Value (%)', fontproperties=merriweather, fontsize=16)
+ax.set_ylabel('Value', fontproperties=merriweather, fontsize=16)
 
 # Title & Legend
-ax.set_title('Emaar ROE and ROA (2021–2024)', fontproperties=merriweather, fontsize=30)
+ax.set_title('Emaar Profitability (2021–2024)', fontproperties=merriweather, fontsize=30)
 ax.legend(
     loc='upper center',
     bbox_to_anchor=(0.5, -0.15),
@@ -345,73 +422,4 @@ ax.grid(False)
 # Save + Show
 plt.tight_layout()
 plt.savefig("emaar_profitability_overview.png", dpi=300)
-plt.show()
-
-
-# Graph 3 - CASH FLOW AND INVESTMENT CAPACITY
-# Group and prepare data
-df_fcf = pd.DataFrame({
-    "Operating Cash Flow": cash_ops,
-    "CapEx": capex  # Make sure you're using 'CapEx' here
-})
-
-# Calculate Free Cash Flow
-df_fcf["Free Cash Flow"] = df_fcf["Operating Cash Flow"] - df_fcf["CapEx"]
-df_fcf = df_fcf.round(2)
-
-# Plotting
-years = df_fcf.index.astype(str).tolist()
-x = range(len(years))
-bar_width = 0.35
-
-fig, ax = plt.subplots(figsize=(14, 6))
-
-# Bars: side-by-side
-ax.bar([i - bar_width/2 for i in x], df_fcf["Operating Cash Flow"], width=bar_width, label="Operating Cash Flow", color='#cba366')
-ax.bar([i + bar_width/2 for i in x], df_fcf["CapEx"], width=bar_width, label="Capital Expenditures", color='#0c243f')
-
-# FCF Line
-ax.plot(x, df_fcf["Free Cash Flow"], color="black", marker='o', linewidth=2, label="Free Cash Flow")
-
-# Line labels
-for i, val in enumerate(df_fcf["Free Cash Flow"]):
-    ax.text(i, val + 1e6, f'{val/1e6:.0f}M', ha='center', va='bottom', fontsize=14, color='black', fontproperties=merriweather)
-
-# Bar labels
-for i, val in enumerate(df_fcf["Operating Cash Flow"]):
-    ax.text(i - bar_width/2, val + 1e6, f'{val/1e6:.0f}M', ha='center', va='bottom', fontsize=12, color='#cba366', fontproperties=merriweather)
-
-for i, val in enumerate(df_fcf["CapEx"]):
-    ax.text(i + bar_width/2, val + 1e6, f'{val/1e6:.0f}M', ha='center', va='bottom', fontsize=12, color='#0c243f', fontproperties=merriweather)
-
-# Axis settings
-ax.set_xticks(x)
-ax.set_xticklabels(years, fontproperties=merriweather, fontsize=16)
-ax.set_xlabel('Year', fontproperties=merriweather, fontsize=16)
-ax.set_ylabel('Value (AED)', fontproperties=merriweather, fontsize=16)
-
-# Remove Y tick labels for style
-ax.set_yticklabels([])
-ax.tick_params(axis='y', which='both', length=0)
-
-# Title & Legend
-ax.set_title('Emaar Cash Flow and Investment Capacity (2021–2024)', fontproperties=merriweather, fontsize=30)
-ax.legend(
-    loc='upper center',
-    bbox_to_anchor=(0.5, -0.15),
-    ncol=3,
-    prop=merriweather,
-    frameon=False
-)
-
-# Styling
-ax.set_facecolor('white')
-fig.patch.set_facecolor('white')
-ax.grid(False)
-
-ax.set_ylim(top=max(df_fcf["Free Cash Flow"].max(), df_fcf["Operating Cash Flow"].max()) + 3e6)
-
-# Save + Show
-plt.tight_layout()
-plt.savefig("emaar_cashflow_investment_capacity.png", dpi=300)
 plt.show()
